@@ -1,0 +1,1376 @@
+Reclaim Protocol:
+
+Claiming and Managing Self-Sovereign Credentials
+
+https://reclaimprotocol.org
+September 21, 2023
+
+Abstract
+
+TLS is a widely used security protocol that allows a user and server to privately
+and securely communicate. However, the data that users receive through this protocol
+is not typically signed by the server, and so the user cannot prove where the data
+came from to any third-party. In recent years there have been various proposals for
+solving this problem without the need for any server-side modification or permission.
+In this whitepaper we describe the Reclaim protocol, which allows for computationally
+efficient, secure and private generation of proofs of provenance (PoP) completely on
+client side that users can then share to any third-party. Furthermore, users can generate
+zero-knowledge proofs of features of their data to avoid sharing sensitive information.
+We also describe a decentralized extension of the protocol that eliminates the need to
+use any trusted parties, by implementing an economic mechanism to incentivize honest
+behavior.
+
+1
+
+Contents
+1 Introduction 4
+1.1 Key Definitions . . . . . . . . . . . . . . . . . . . . . . . . . . 5
+2 Cryptographic Protocol 6
+2.1 TLS Request Selective Reveal . . . . . . . . . . . . . . . . . . 6
+2.2 TLS Response Selective Reveal . . . . . . . . . . . . . . . . . . 7
+3 Generating Credentials 10
+3.1 Generating Proofs . . . . . . . . . . . . . . . . . . . . . . . . . 11
+3.2 Verifying Proofs . . . . . . . . . . . . . . . . . . . . . . . . . . 12
+4 Decentralized Extension 14
+4.1 Claim Requests . . . . . . . . . . . . . . . . . . . . . . . . . . 15
+4.2 Attestor Selection and Fees . . . . . . . . . . . . . . . . . . . . 15
+4.3 Reporting Mechanism . . . . . . . . . . . . . . . . . . . . . . . 17
+4.3.1 Honeypot Mechanism . . . . . . . . . . . . . . . . . . . 19
+4.4 Security Guarantees . . . . . . . . . . . . . . . . . . . . . . . . 20
+4.4.1 Equilibrium Guarantee . . . . . . . . . . . . . . . . . . 20
+4.4.2 Guarantee with Prior on Honesty . . . . . . . . . . . . . 21
+4.5 Impossibility Results . . . . . . . . . . . . . . . . . . . . . . . 22
+5 Reclaim Blockchain 23
+5.1 Payments to Externally Owned Accounts . . . . . . . . . . . . 23
+5.2 Paying Contracts . . . . . . . . . . . . . . . . . . . . . . . . . 24
+5.3 Blocks . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 25
+5.3.1 Slashing . . . . . . . . . . . . . . . . . . . . . . . . . . 26
+5.4 Supported Contracts . . . . . . . . . . . . . . . . . . . . . . . 26
+5.4.1 Stake, Cstake . . . . . . . . . . . . . . . . . . . . . . . . 26
+5.4.2 Attestor Contract, Cai
+
+. . . . . . . . . . . . . . . . . . . 26
+5.4.3 Proof Generator, Cproof . . . . . . . . . . . . . . . . . . 26
+5.4.4 Whistleblowing, Cwhistle . . . . . . . . . . . . . . . . . 27
+5.4.5 Honeypot, Choneypot . . . . . . . . . . . . . . . . . . . . 27
+6 Conclusion 28
+
+2
+
+A Use of Cryptographic Primitives 31
+A.1 TLS Encryption Function . . . . . . . . . . . . . . . . . . . . . 31
+A.2 Digital Signature Algorithm . . . . . . . . . . . . . . . . . . . 32
+A.3 Key Derivation Function . . . . . . . . . . . . . . . . . . . . . 32
+A.4 Hash Function . . . . . . . . . . . . . . . . . . . . . . . . . . . 32
+B Implementing Proof Verification 33
+B.1 Sharing Proof with Centralized Verifier . . . . . . . . . . . . . 33
+B.2 Sharing Proof with a Smart Contract . . . . . . . . . . . . . . 33
+C Fee Payment Mechanism 33
+D Further Security Considerations 34
+D.1 Private Data Reveal Attacks . . . . . . . . . . . . . . . . . . . 34
+D.2 Man in the Middle Attacks . . . . . . . . . . . . . . . . . . . . 35
+D.3 Impersonation Attacks . . . . . . . . . . . . . . . . . . . . . . 35
+D.4 Doxxing Attacks . . . . . . . . . . . . . . . . . . . . . . . . . . 36
+E Example of a TLS Response Modification 36
+
+3
+
+1 Introduction
+Transport Layer Security (TLS) version 1.3 is a standard security protocol
+
+that is used for secure communication in a wide range of networking applica-
+tions, most notably in HTTPS [9]. When a user and a website begin the protocol,
+
+they engage in a handshake that results in them generating a shared symmetric
+key, which then allows them to send encrypted data.
+In many online applications, websites send data to be displayed on the user’s
+
+browser that contains information about the user’s identity, such as their cre-
+dentials, property, and online account ownership. For example, the data sent by
+
+a banking website would include the user’s account balance. Suppose the user
+
+wants to use this data to prove some information about themselves to a third-
+party. There are two issues that make this difficult that the Reclaim protocol
+
+aims to resolve. The first is that it is not currently standard for websites to
+digitally sign the data that they send, so a user may not be able to prove that
+their data was actually sent by the website. In other words, the user is unable to
+prove the provenance of the data, and we call such a proof a proof of provenance
+(PoP). Secondly, the user may only want to share a subset of the information in
+their data, or some coarser information derived from their data. For example,
+suppose a user wants to demonstrate that they are at least 18 years old but not
+reveal their exact age. We call this restricted sharing of information a selective
+reveal.
+In recent years there have been several proposed solutions to generated PoPs.
+These solutions involve in different ways an intermediary who interacts with the
+user and website during the TLS session, in a protocol that preserves the data
+privacy but allows the intermediary to verify the provenance of the data. The
+protocols use different names for these intermediaries, we will be using calling
+
+them all attestors for simplicity. The DECO protocol [15] (short for ’decentral-
+ized oracle’) has the party that the user is trying to prove the provenance of their
+
+data to act as the attestor. Town Crier [14] uses a trusted execution environment
+(TEE) such as Intel SGX [3] to act as the attestor, which allows users to prove
+the provenance their data to any third-party. Unfortunately there are known
+security concerns with the TEEs that are currently available [11, 12], however
+these may be resolved as the technology further develops. Another proposal is
+TLSNotary [1], which uses a trusted ’notary’ as the attestor.
+
+Reclaim aims to generate publicly verifiable PoPs while preserving user pri-
+4
+
+vacy and avoiding the risks of using TEEs. In the basic version of the protocol,
+an attestor passes encrypted data between the user and website during the TLS
+
+session, and then digitally signs the data to vouch for its authenticity. This sig-
+nature acts as a PoP for the data. Then, the user can generate a zero-knowledge
+
+(ZK) proof that selectively reveals their desired information. The user can then
+share the PoP and ZK-proof with any third-party who can verify that the proofs
+
+are valid. While the basic version of the protocol is simple to execute, its limi-
+tation is that third-parties must trust that the attestor did not collude with the
+
+user to sign off on falsified data.
+In order to address the issue of trust we have also created a decentralized
+extension of the protocol. This version proceeds by running the basic protocol
+multiple times with different attestors, who each independently sign off on the
+data’s authenticity. An economic mechanism is used to inventivize the attestors
+to behave honestly, and not sign any data that they did not actually receive
+from the website. The user can then share the ZK-proofs they generated along
+with the attestors’ signatures to any third-party.
+The remainder of the whitepaper is organized as follows. In section 2 we
+describe the details of how our protocol interacts with the TLS protocol. In
+
+section 3 we zoom out to describe the full proof generation and sharing pro-
+cess. In section 4 we describe the decentralized extension of the protocol, and
+
+finally in section 5 we give the details of the blockchain that will be facilitat-
+ing the decentralized protocol. We also give further security considerations in
+
+Appendix D.
+1.1 Key Definitions
+We define some terminology that we will be using for the rest of the paper.
+A User is the party that desires to create a credential. A Claim is a fact about a
+person, such as that they own a certain email account or have a certain amount
+of funds in a bank account. A Credential is a claim along with the proof of the
+claim. The Website is the server that sends the data needed to prove the claim.
+
+5
+
+2 Cryptographic Protocol
+
+In order to create a proof of a claim, a User must first log in to the de-
+sired Website that will be sending the data. Once logged in, the User must
+
+then navigate to the specific desired webpage. The HTTPS request to open the
+Website, and the response, is routed through a HTTPS Proxy Server called an
+Attestor. This Attestor can only see the encrypted data, not the plaintext. The
+Attestor monitors the encrypted packets transferred between the User and the
+Website. The User shares a fraction of the keys with the Attestor, that are used
+by the Attestor to verify the User indeed owns the credential (by decrypting
+the traffic), and in turn the Attestor produces a signature, attesting this fact.
+This signature of the Attestor is the proof, which can then be shared to any
+third-party as described in section 3. A high level overview of how the protocol
+works can be found in the Figure 1.
+For the third-party to be able to trust the proof that was created, they must
+know that the correct request was made to the Website and the appropriate
+response was received originating from the Website. In the following section, we
+describe the way the User can reveal parts of the request to establish this trust
+– without revealing private information like passwords, authentication tokens
+and cookies.
+
+2.1 TLS Request Selective Reveal
+
+The TLS session consists of a key pair containing a sending key and a receiv-
+ing key. One way to reveal the request is to reveal the User’s TLS sending key
+
+to the Attestor. The Attestor can then decrypt the encrypted request and check
+the correctness of the request. If the correct request was made, the Attestor
+attests the request and its corresponding response.
+This approach will be enough to prove to the Attestor, and thereby to any
+
+third-party, that the request was correct. However, this approach will also re-
+veal private information like authentication tokens and cookies to the Attestor,
+
+giving the Attestor login access to the Users’ account.
+To mitigate this the Reclaim TLS Request Selective Reveal mechanism uses
+the KeyUpdate method introduced in TLS 1.3 [10]. The User uses the following
+scheme to login into the Website:
+
+– The User plays a role of the TLS Client, connects to the desired Web-
+6
+
+site, that plays the role of the TLS Server. They execute a regular TLS
+Handshake and negotiates their session key pair (K
+sending
+1
+, Kreceiving
+1
+).
+– The User sends the first part of the request encrypted using the sending
+key K
+sending
+1
+. This is the part from the beginning of the request to the first
+
+byte of the private data in the request, excluding.
+– The User then updates their sending key, hence derives K
+sending
+2 by sending
+
+the KeyUpdate TLS message.
+– The User sends the second part of the request encrypted using K
+sending
+2
+.
+This part contains private information, such as tokens and cookies.
+– The User then updates their sending key again, hence derives K
+sending
+3 by
+
+sending another KeyUpdate TLS message.
+– The User sends the rest of the request encrypted with K
+sending
+3
+.
+
+The User can prove to the Attestor that they made the right request to open
+the webpage by revealing K
+sending
+1
+and K
+sending
+3
+to the Attestor. The Attestor
+already has access to the encrypted version of the parts of the requests that were
+made. The keys K
+sending
+1
+and K
+sending
+3
+can be used to decrypt the respective parts.
+The Attestor attests that the correct webpage was opened without knowing the
+private data in the request. This is all a third party needs to know that the User
+opened the correct Website to generate the proof from.
+In reality, private and public data in the User’s request can be mixed-up, so
+the key update mechanism above has to be carried out several times. Therefore,
+the User will disclose to the Attestor all of their TLS sending keys that were
+used to encrypt public parts of the request.
+2.2 TLS Response Selective Reveal
+The User opens a Website upon making a successful request and receiving a
+response from the Website. The response is entirely encrypted by just one key
+K
+receiving
+3
+. The Attestor can attest to the encrypted response passed from the
+Website to the User. But cannot attest to the correctness of the contents of the
+encrypted data.
+A naive approach to have correctness of response attested by the Attestor is
+for the User to reveal the session key used to encrypt the response K
+receiving
+3
+. But
+
+7
+
+the disadvantage of this approach is that the entire webpage will become public
+– including some information that the User would have liked to keep private.
+For example, if the User is generating a proof of their bank balance, they don’t
+want to reveal other information like account number, physical address, and
+phone number which might also be presented on the same webpage.
+Unlike the case for Selective Revealing of the Request, we cannot use the
+
+KeyUpdate mechanism for selectively revealing parts of the webpage by nego-
+tiating a new key before and after sending the information that needs to be
+
+revealed. That is because we do not have any control of the way the Website
+
+sends a response. Reclaim protocol is designed to generate a proof of data trans-
+ferred over an HTTPS connection without requiring a change on the Website’s
+
+servers. To achieve this, Reclaim Protocol looks to Zero Knowledge Proofs.
+Let us say the User receives the encrypted response enc_resp from the
+Website that when decrypted using the K
+receiving
+3 decrypts to resp. The User
+
+executes the following mechanism locally:
+
+– Divides resp into TLS packets. Then it identifies all the data that is sup-
+posed to be revealed. It discards all the packets that don’t contain this
+
+data and replaces all the bytes left that are not going to be revealed with
+a gibberish character represented by «∗». It is left with the blocks respp
+.
+
+– Divides each TLS packet of respp
+
+into blocks. The size of each block is
+equal to the block size used by the underlying encryption cipher – AES
+or ChaCha20. It discards all the blocks that consists of gibberish symbols
+only. It is now left with respr
+.
+
+– Transfers all the modifications of the resp onto enc_respr
+
+in the following
+
+way: if a byte of resp is not represented in respr
+
+, the corresponding byte
+is eliminated from enc_resp; if a byte of resp is a «∗» symbol in respr
+,
+the corresponding byte is replaced by the «∗» symbol in enc_respr
+; if a
+
+byte of resp is preserved in respr
+
+, the corresponding byte is also preserved
+
+in enc_resp. The resulting data is enc_respr
+.
+
+An example of a response modification can be found in the Appendix E.
+
+This is then fed to the ZK circuit and executed with the following parame-
+ters.
+
+– Public Input : enc_respr
+8
+
+– Private Input : Session Key K
+receiving
+3
+, Nonce N used to encrypt the
+
+relevant bytes.
+– Output : Decrypted enc_respr using the Key K
+receiving
+3
+and Nonce N:
+
+dec_enc_respr
+
+, and a ZK-Proof that enc_respr
+
+indeed corresponds to
+
+dec_enc_respr
+.
+
+In order to prove to the third party that they used the correct enc_respr
+to generate this proof, the User also shares the initial string enc_resp that
+has been attested by the Attestor. The verifier of this proof must verify the
+following:
+– Correct string was decrypted – by ensuring that enc_respr
+
+is a substring
+of enc_resp (at the all non-gibberish characters) and was used as a public
+input to the circuit.
+
+– The decryption was performed correctly – by running the ZK Verify func-
+tion with inputs: enc_respr
+
+, dec_enc_respr
+
+, ZK-Proof, that has to return
+
+TRUE.
+For making it efficient enough for these ZK Proofs to be generated on a
+mobile device, we require the use of ChaCha20 as the cipher of choice, discussed
+further in the Appendix A.1.
+We also emphasize that the amount of pure data that has to be revealed by
+the User to the Attestor is defined by each provider. However, we require each
+provider to reveal at least 16 bytes of data.
+
+9
+
+Figure 1: Reclaim proof creation protocol
+
+3 Generating Credentials
+The Reclaim protocol stores the proofs that are generated on a public ledger
+or blockchain, so that they can be verified by any third-party. Storing this
+information on chain also helps decentralize the protocol, as seen in section 4.
+However, Users should be able to choose for credentials that they claim to not be
+linked to one another to maintain anonymity and privacy. This poses a challenge
+when proofs are stored on chain as it must not be possible for third-parties to
+analyse the public ledger and determine which claims were generated by the
+same User. In this section we describe a mechanism that solves this issue.
+We denote the participants for this mechanism as follows
+– The Attestor has a key pair (Ask, Apk) where Ask is a secret key and Apk
+is their public key that is published publicly.
+– The User has a master key pair Msk, Mpk. Msk is a private key used to
+derive other keys, this key pair is best kept secret, including Mpk if the
+User doesn’t want to reveal their identity.
+– The Blockchain where the proof’s data can be stored.
+
+10
+
+3.1 Generating Proofs
+The mechanism works as follows, where the User wants to generate a proof
+of some claim X. A scheme of this protocol can be found in the Figure 2.
+1. The User first generates a claim specific key pair (Xsk, Xpk) as follows:
+
+(Xsk, Xpk) ← KDF(Hash(X), Msk)
+
+2. User submits (X, Xpk, timestamp, fee) to the Blockchain. We describe the
+details of the fee in Appendix C.
+3. Once the above data has been stored on the Blockchain, the User and the
+Attestor execute the TLS Proof of Provenance Protocol as described in
+section 2.
+4. The User submits the proof Proof generated above to the Blockchain.
+This Proof consists of the ZK Proof as defined in the section 2.2 and the
+signature of the Attestor.
+5. The Attestor submits their signature using Ask for the response it witnessed
+as an attestation
+
+Attestation ← Sign(enc_resp∥Hash(X), Ask)
+
+6. The Blockchain verifies that the attestation came from the Attestor and
+the Proof are valid for the claim X.
+
+Figure 2: A claim proof generation scheme
+
+11
+
+3.2 Verifying Proofs
+The Verifier is a third-party that receives the proof from the User of claim
+X and can verify from the data on the Blockchain that the proof was created
+correctly. The following steps must be executed between the Verifier and the
+User. A scheme of this protocol can be found in the Figure 3.
+1. The Verifier generates randomly a byte string context of an arbitrary
+length, and sends it to the User.
+2. The User signs a message consisting of Hash(X) and context, using the key
+Xsk:
+
+sig = Sign(Hash(X)∥context, Xsk).
+
+The User sends sig to the Verifier, along with the public key Xpk and
+claim X.
+3. The Verifier verifies the correctness of the signature sig. If the signature
+is correct, the Verifier proceeds, and terminates the protocol, otherwise.
+4. Verifier fetches the Proof from the Blockchain by querying it with
+Hash(X).
+5. Verifier verifies that the Proof was generated for the right Claim it was
+expecting.
+6. Verifier verifies that the timestamp on the Proof is within an acceptable
+range for their business logic.
+7. Verifier stores Xpk and increments the number of times Proof with Xpk
+has been submitted to them
+
+12
+
+Figure 3: A proof sharing scheme
+
+13
+
+4 Decentralized Extension
+The Reclaim protocol as described in section 2 requires the use of a trusted
+party to be an Attestor to each claim. In particular, the attestor must be trusted
+to not collude with any user to certify a false claim. In this section we describe a
+modification to the protocol that replaces the single single trusted attestor with
+a set of multiple trustless attestors, who are incentivized to behave honestly by
+an economic mechanism.
+Records of the protocol are saved to a blockchain to ensure a trustworthy
+record of the actions of the nodes in the network. The blockchain is maintained
+by a proof-of-stake (PoS) protocol where nodes stake a Reclaim token. The
+number of Reclaim tokens a node has staked also affects the probability that
+node will be selected to be an attestor.
+The decentralized protocol has the following steps, for which we describe
+the details of in the subsequent subsections:
+1. A user submits a claim request. A claim request includes the address of
+the website that the data will be coming from, as well as other information
+such as the minimum required security level and maximum acceptable fee.
+2. A set of n attestors are selected from the pool of available nodes and the fee
+that the attestors will charge for their services will be chosen. This is done
+through an auction mechanism that depends on bids that nodes submit,
+the number of tokens each node has staked, and randomness.
+3. The basic Reclaim protocol is conducted a separate time for each attestor,
+and each attestor signs off on the data that they receive from the website.
+4. If each of the attestors signs off on the same data, then the claim is certified
+and the fee is sent from the user to each attestor. Otherwise, the process
+
+is repeated with a new set of highly trustworthy attestors (how these at-
+testors are selected will be described shortly.) Depending on the reports of
+
+these attestors, the claim is certified or not, and the original attestors are
+punished or rewarded according to a mechanism.
+We fix some notation that we will use for the rest of the section. We say
+the network has N nodes indexed i = 1, ..., N where each node i has si > 0
+Reclaim tokens staked.
+
+14
+
+4.1 Claim Requests
+A user at any time can submit a claim request which must be recorded to
+the blockchain before the claim process can continue. A claim request R consists
+of the following field:
+1. The address of the website that will be queried.
+2. The minimum acceptable level of security for the proof.
+3. The maximum acceptable cost for the proof.
+
+4. The address for funds to be withdrawn from and the corresponding signa-
+ture.
+
+4.2 Attestor Selection and Fees
+After a user has recorded a claim request to the blockchain a set of attestors
+must be selected to validate the claim, and the fee that the user will pay each
+
+attestor must be decided. This will be done by what we call the selection mech-
+anism. The two objectives that the selection mechanism should be optimizing
+
+for are:
+1. Keeping the prices low so that proof generation is as cheap as possible for
+users.
+2. Limiting the maximum probability that nodes colluding with the user can
+get themselves selected as attestors.
+The first objective is straightforward. The second objective says that nodes
+colluding with a user shouldn’t be able to take an action that greatly increases
+the chance they are selected to attest that user’s claim. For example, suppose
+that the mechanism is an auction where nodes submit bids for the lowest price
+that they will agree to be attestors, and the n nodes with the lowest bids are
+selected to be the attestors. Then a group of n nodes colluding with a user
+could submit very low bids shortly before the user submits a claim request, and
+ensure that they are selected.
+So we desire a mechanism that achieves low prices like those that result from
+auctions, but also limits the selection probability of nodes. Our protocol uses a
+mechanism we call a Mixed Quantile Auction (MQA), which we formally define
+
+15
+
+next and then show theoretical guarantees for. Informally, in this auction the
+winners are selected uniformly at random from the pool of nodes P that have
+the lowest bids up to a given quantile q. (For example, if q = 0.4 then P is the
+40% of nodes with the lowest bids.) Then, the price that the attestors are paid
+is set to be the lowest bid of all nodes not in P. See that increasing the value
+of q will raise the price, but increase the randomness.
+We will assume that the nodes are indexed by i = 1, 2, ..., N where the
+indices can help break ties in the mechanism. The choice of ordering is not
+important; it could be done in chronological order of when the nodes submitted
+their bids, for example. We denote the number of nodes selected to attest a
+single claim by n.
+
+Definition. A Mixed Quantile Auction with quantile q is the following mecha-
+nism. The users simultaneously submit bids B1, ..., BN . Let k = ⌊qN⌋, and let
+
+P be the set k nodes with lowest bids, where ties are broken such that nodes
+with lower indices are included in P. Then n nodes are selected to be attestors
+uniformly at random from P, and the price paid to each attestor is the lowest
+bids of all nodes not in P.
+
+The simultaneity of the bids in the auction can be achieved by a commit-
+reveal scheme, where revealing can be enforced by slashing users who commit
+
+to a bid but do not reveal the true value. However, there is little that users can
+achieve by not revealing or exploiting any non-simultaneity in the bidding, so a
+commit-reveal scheme may not be necessary.
+A key concept in mechanism design is strategy-proofness, where a mechanism
+is strategy-proof if it is a dominant strategy for the players to report their true
+type. In this setting, a node’s type is the cost that the node incurs from being
+an attestor, which we will denote by ci > 0. Then MQA will be strategy-proof
+if it is optimal for each node to bid ci
+
+. We show that this is indeed true in the
+
+following theorem.
+Theorem 1. MQA is strategy-proof.
+Proof. Denote the costs of the nodes by c1, ..., cN . Let B−i =
+(B1, ..., Bi−1, Bi+1, ..., BN ) denote the vector of all of the nodes’ bids omitting
+node i. Fixing a value of B−i
+
+, let pi be the highest bid that node i could make
+and still be included in P. If pi < ci then i will lose money if it wins, and so
+any bid bi > pi will be optimal since then i will win with probability zero. If
+
+16
+
+pi ≥ ci
+, then any bid bi ≤ pi will lead to i winning with probability n/k and
+the price equalling the (k + 1)th-smallest value in B−i
+
+. In either case bidding
+
+bi = ci
+is optimal, so the mechanism is strategy-proof.
+
+4.3 Reporting Mechanism
+After a claim request is recorded to the blockchain, as well as the the set
+
+of n nodes who will be the attestors and the fee f they will be paid, the re-
+porting mechanism begins. The reporting mechanism is the system in which the
+
+attestors sign off on the data they observe, and the user or attestors may receive
+
+punishments for dishonest behavior. The mechanism should be designed to in-
+centivize the participants to behave honestly, and to be as secure as possible
+
+against bribery and other attacks.
+When the mechanism begins, the user has C tokens staked as collateral,
+
+i.e. this is the maximum amount that can be taken from the user as punish-
+ment. Similarly, each attestor i has si tokens staked. We then formally define a
+
+reporting mechanism as the following.
+Definition. A reporting mechanism is a function
+
+M : R
+n+1
+≥0 × {0, 1}
+n → R
+n+1
+≥0
+
+that maps the stakes of the attestors and user (s1, ..., sn, C), as well as a binary
+value ri
+for each attestor i, to a new vector of stakes s
+′
+1
+, ..., s′
+n
+, C′
+. Each ri value
+equals one if the user successfully generated a ZK-proof using the data that
+node i signed, and equals zero otherwise.
+The reporting mechanism that we use proceeds as follows. First, the basic
+Reclaim protocol as described in section 2 is conducted between the user, the
+desired website, and each separate attestor. Let Di be the (encrypted) data that
+attestor i receives from the website. Each attestor then submits to the chain Di
+wrapped in their signature, as well as a cryptographic commitment of whether
+or not they want to be a whistleblower. Committing to being a whistleblower
+gives attestors an opportunity to appear to the user like they are colluding
+with them, while telling the mechanism that the user is being dishonest. The
+user then has an opportunity, upon viewing the data that the attestors have
+submitted, of requesting that any of the attestors to query the website a second
+time. This is to mitigate any possible errors caused by the website or some other
+
+17
+
+source. After some fixed time the opportunity to request a second query ends,
+and the attestors then reveal whether they were a whistleblower or not.
+Next, the user generates a separate ZK-proof Zi of their desired claim using
+the signed data that attestor i submitted to the chain, and submits each Zi
+to the chain. The set of ZK-proofs Z = (Z1, ..., Zn) is then considered a valid
+proof of the claim. But, if any of the ZK-proofs are missing or incorrect, Z is
+not considered a valid proof.
+Once each Zi
+
+is submitted, the fee of f is then transferred from the user to
+each of the attestors, and the protocol is complete. However, if one or more of
+the ZK-proofs Zi are not successfully submitted or at least one attestor was a
+whistleblower, then an escalation is initiated. An escalation may occur because
+the claim is true, but an error occurred through no fault of the user or attestor.
+Or, the escalation may have resulted from the user attempting one of the two
+following types of attacks.
+Definition. A false claim attack is when a user attempts to generate a proof
+of a false claim.
+Definition. A true claim attack is when a user initiates a claim for a true
+credential so that a colluding attestor can try to profit from whistleblowing.
+In a false claim attack, we would like to punish as harshly as possible the user
+and any attestors who said the claim was true, and reward the honest attestor(s).
+However, in a true claim attack we would like to reward any attestors who said
+the claim was true and punish the ones who said it was false (as well as the
+user.) The challenge is in distinguishing these two scenarios, and when this is
+not possible it constrains the punishments and rewards the mechanism can give.
+With those goals in mind, the escalation procedure has the following steps.
+A set of n
+
+′ nodes are selected to be appeal attestors, from a pool of high-trust
+nodes. Fixing a small constant θ > 0, the pool of high-trust nodes H could be
+all nodes who have stake si that is in the top θ quantile of all of the nodes’
+stakes. Nodes are then selected from H proportional to the size of the stake.
+After the appeal nodes are selected, the Reclaim protocol is then repeated
+between the user, the website, and each of the appeal attestors. If the user
+successfully generates ZK-proofs with each of the appeal attestors, we say the
+appeal succeeded, and otherwise we say the appeal failed. Note that assuming
+that these attestors will not collude with the user, the appeal is able definitively
+prove that the claim is true, but it is not able to prove if the claim is false.
+
+18
+
+This is because the user could do a variety of things to cause the appeal to fail
+even if the claim is true, such as supplying the attestors with incorrect data for
+querying the websites.
+We call the non-appeal attestors the primary attestors. Let A1 be the set of
+primary attestors for whom the user successfully generated a ZK-proof and who
+did not whistleblow, and let A2 be the remaining primary attestors i.e. the ones
+who either were whistleblowers or for whom the ZK-proof was not successfully
+generated. Let ε ∈ (0, 1), β > 0 and s > 0 be fixed constants. Then:
+– If the appeal succeeded, each attestors in A2 has their stake slashed by a
+small penalty β.
+– If the appeal failed, each attestor in A1 has all of their stake slashed or s
+tokens slashed, whichever is smaller. The user also has all of their collateral
+C slashed, and (1 − ε)C tokens are divided evenly between each attestor
+in A2.
+
+The purpose of the small penalty β is to discourage attestors from whistle-
+blowing when they do not believe the claim is actually likely to be false. The
+
+purpose of the amount attestors can be slashed being capped by s is to discour-
+age users from launching true claim attacks that have the goal of getting large
+
+quantities of tokens slashed, reducing the total supply of tokens and possibly
+inflating their value.
+If true claim attacks were not possible, we the mechanism could further
+reward whistleblowers by giving them all of the stake that has been slashed
+from the other attestors. However, the possibility of true claim attacks puts a
+hard constraint on how large this reward can be.
+Fact. If true claim attacks cannot be profitable, then when an escalation occurs
+and the appeal fails, the net change in tokens for the user plus the next change
+in tokens for the attestors in A2 is at most zero.
+In the following subsection we analyze the game-theoretic security of the
+reporting mechanism, but first we describe another step that can be added for
+additional security.
+4.3.1 Honeypot Mechanism
+We want to discourage attestors from accepting bribes from a user to sign
+
+falsified data supplied by the user. The Honeypot Mechanism allows users to en-
+19
+
+trap attestors who sign falsified data, and so provides a disincentive to attestors
+for accepting bribes.
+When the Honeypot Mechanism is used, the user includes a cryptographic
+commitment of some data D∗
+
+that the user can choose arbitrarily. Then, after
+the attestors have submitted their signed data to the chain, the user can reveal
+the true value of D∗
+. If D∗
+exactly matches the data that an attestor submitted,
+assuming the website never returns identical data twice, then the data that the
+attestor signed must have been falsified. The mechanism then confiscates the
+stake of the offending attestor and gives it to the user.
+4.4 Security Guarantees
+The attestor selection mechanism is designed to make it difficult for a user
+to have their claim attested by nodes that either the user directly controls, or
+who have agreed to collude. Assuming then that the attestors for a given claim
+do not have any prior agreements and do not expect to collude together in the
+future, how secure is the reporting mechanism against bribing attacks?
+Suppose that the user has credibly promised to pay each attestor bi tokens
+for signing some provided falsified data, and let B =
+Pn
+i=1 bi
+. If the attestor
+signs the falsified data we say that are being dishonest, and if they sign the real
+data we say they are being honest. Recall that the user has staked a collateral of
+C tokens and each attestor has staked si tokens. There are then a few different
+game-theoretic questions one can ask.
+4.4.1 Equilibrium Guarantee
+
+What is the minimum value that B must be for every attestor being dis-
+honest to be a Nash equilibrium? That is, what is the minimum amount that
+
+the user has to spend on bribe so that each attestor is satisfied being dishonest
+and no attestor can make more by being honest. Suppose the claim is false, fix
+an attestor j, and suppose each other attestor is dishonest. If j is dishonest
+than it will earn the bribe of bj
+
+. If j is honest then the claim will be escalated
+and the appeal will fail, and j will earn (1 − ε)C. Therefore if j is dishonest in
+equilibrium then bi ≥ (1 − ε)C and so
+
+B =
+X
+n
+
+i=1
+bi ≥
+X
+n
+
+i=1
+(1 − ε)C = (1 − ε)Cn.
+
+20
+
+4.4.2 Guarantee with Prior on Honesty
+Suppose that each attestor is always honest with probability α. What is the
+minimum value that B must be to convince not-always-honest attestors to be
+dishonest? This guarantee will be stronger than the equilibrium guarantee, but
+assume a prior on the honesty of the attestors.
+Suppose that the claim is false, fix an attestor j, and suppose that the bribe
+to each other attestor is sufficiently high that they will be dishonest if they are
+not always honest. The probability that none of the other attestors is always
+honest is (1 − α)
+n−1
+.
+
+If j is honest then it will split the value of (1−ε)C between each of the honest
+attestors. If α is small, this will approximately equal (1 − ε)C in expectation.
+If j is dishonest, then with probability (1−α)
+n−1
+each of the other attestors
+
+is dishonest and j earns bj
+
+. With probability 1 − (1 − α)
+n−1
+some other node
+will be honest, and j will their stake sj confiscated. So, for j to earn a profit in
+expectation by being dishonest it must hold that
+
+bj − (1 − (1 − α)
+n−1
+)sj ≥ (1 − ε)C
+=⇒ bj ≥ (1 − ε)C + (1 − (1 − α)
+n−1
+)sj
+
+and so, letting S =
+Pn
+i=1 si we get
+B ≥ (1 − ε)Cn + (1 − (1 − α)
+n−1
+)S.
+
+However, the probability that the claim will be successfully certified is only
+(1 − α)
+n
+, and so the average amount the user has to pay for one successfully
+
+certified claim is
+B
+∗ =
+1
+(1 − α)
+n
+B =
+1
+(1 − α)
+n
+((1 − ε)Cn + (1 − (1 − α)
+n−1
+)S). (1)
+
+See that B∗
+
+grows exponentially in n. As a quick example, suppose n = 5
+
+and α = 0.2. Then (1 − α)
+
+n−1 = 0.41 and so Equation 1 becomes
+B
+∗ = 3.05(1 − ε)Cn + 1.80S.
+
+Now suppose n = 5 and α = 0.5, then we get
+
+B
+∗ = 32(1 − ε)Cn + 30S.
+
+If C = 100 tokens, each si = 100 tokens and ε is small, then B∗ ≈ 31000 tokens.
+
+21
+
+4.5 Impossibility Results
+Our reporting mechanism requires the existence of a pool of high-trust nodes
+that appeal attestors can be selected from. However, it would be preferable if
+
+the mechanism had economic security guarantees without any trust assump-
+tions. Unfortunately there are provable limitations for what can be achieved in
+
+this setting without minimal trust assumptions, even in the absence of bribery
+
+or collusion. These limitations simply follow from the fact that reporting mech-
+anisms do not have access to the actual truth value of a claim, and so the truth
+
+value can only affect the outcome through coordination of the attestors 1
+.
+For example, one may reasonably desire a reporting mechanism to have a
+(strongly) dominant strategy for each of the attestors to report honestly. That
+is, when the claim is true for each attestor it is a dominant strategy to report
+true, and when the claim is false for each attestor it is a dominant strategy
+to report false. However, since the mechanism cannot directly depend on the
+truth value of the claim, for each attestor it must simultaneously be a strongly
+dominant strategy to report true and to report false, which is impossible. Thus,
+no such mechanism exists.
+
+1See Coordination game.
+
+22
+
+5 Reclaim Blockchain
+The Reclaim Blockchain is a proof-of-stake (PoS) UTXO-based blockchain.
+This blockchain does not support full programmability but is instead optimized
+for user privacy and cheap operation of the primitives used by the Reclaim
+protocol. In this section we describe the important details of this blockchain.
+5.1 Payments to Externally Owned Accounts
+
+This blockchain uses a design similar to Zerocash [2]. Each payment is rep-
+resented by a set of coins {c} where each coin is the tuple
+
+c = ((apk, pkenc), v, ρ, r, s, cm)
+
+with the following elements:
+– apk is the address of the receiver
+– pkenc is the public key of the receiver for encryption of the private variables
+– v is the value of the coin
+– ρ is the serial number random seed
+– r, s are random numbers in the commitment
+– cm is the commitment to the coin
+As in Zerocash, we define
+– PRFsn
+ask
+as a pseudo random function that takes input ρ and produces sn for
+a given secret key of the receiver of the coin ask.
+– COMMr(m) is a commitment to m with randomness r that can be revealed
+given m and r.
+Only the variables cm and sn are made public on the blockchain. The
+blockchain keeps track of all the coin commitments in an updating Merkle root
+rt.
+To transfer a coin, a user must prove:
+– User knows a coin cold, the snold and the private key ask
+
+23
+
+– User knows c
+1
+new c
+2
+new identified by commitments cm1
+
+new and cm2
+new
+
+– All coins cold, c
+1
+new , c
+2
+new are all well formed
+– Public Key of cold matches the expected PRFaddr(0)
+ask
+
+– Serial number snold = PRFsn
+a
+old
+sk
+(ρ)
+– cmold appears in a Merkle root rt
+– snold has not appeared on chain yet
+– v
+1
+new + v
+2
+new = vold
+
+All these proofs can be generated in zero-knowledge, given public knowledge
+of sn and cm. Thus, payments can be made to any externally owned accounts,
+that is accounts with address ask without revealing the sender, receiver and the
+value of the transaction. We recommend the users to own the Reclaim Tokens
+
+in a Master Wallet and create proofs of credentials using a throwaway exter-
+nally owned account. This throwaway account must be funded with Reclaim
+
+Token to be able to pay for the transactions. Transferring Reclaim Tokens to
+the throwaway account is privacy preserving, so the Master Wallet never gets
+doxxed.
+
+5.2 Paying Contracts
+
+Contracts are used to enable certain transactions in a trustless fashion. How-
+ever, contracts don’t have a secret key ask and and encryption secret key skenc.
+
+Thus, a transaction is made publicly including the sender apk and the value v.
+
+Should the user want to maintain privacy, they must transact with a smart con-
+tract by first funding a throwaway account, and transact using this throwaway
+
+account. Unlike externally owned accounts, the smart contracts account bal-
+ances are not tracked using coins as described in the previous section. Instead,
+
+smart contract balances are maintained in a account model similar to Ethereum
+[13]. An externally owned account can invoke a call to a smart contract using
+
+t = (snold, cmold, π, addrcontract, calldata)
+
+Where π is the proof of ownership of coin cold and calldata is the parameter
+associated with the contract call.
+
+24
+
+5.3 Blocks
+A new block is produced every 10s by an Attestor. The Attestor is chosen
+using a randomization seed provided in a trustless fashion by a Beacon Chain,
+similar to the Ethereum Beacon Chain powered by a RANDAO. Each block
+consists of the following:
+– Block Number
+– Timestamp
+– Previous Block Hash
+– EOA Transactions and their proofs
+– Mint transaction to mint R reward tokens to self, EOA transaction
+– Slashing transactions and their proofs
+– Updated Merkle Root
+– Contract Transactions and their proofs
+– Updated Contract Balances stored in a Merkle root
+– Block Hash
+A block is accepted and built upon if and only if
+– Block Number = previous block + 1
+
+– Timestamp is within an accepted margin of error to the current time ob-
+served
+
+– Blockhash = previous block’s hash that was accepted
+– All EOA transactions have valid proofs
+– The mint transaction was for exactly R tokens
+– Slashing transactions are valid
+– Merkle Root was correctly updated using the EOA transactions
+– All Contract transactions have valid proofs
+– Contract Balances and Merkle root were correctly updated
+– Block Hash is equal to the hash of all the data enclosed in the block
+
+25
+
+5.3.1 Slashing
+As mentioned above, a block producer may create a slashing transaction.
+This transaction will reduce the stake of the Attestor by a punishment p, which
+is a network parameter for each provable malice in block generation.
+5.4 Supported Contracts
+5.4.1 Stake, Cstake
+
+Cstake is a contract that allows any Attestor to join the network by trans-
+ferring a minimum stake Si > Smin to this contract. This deploys a contract for
+
+the staked Attestor Cai
+
+5.4.2. The probability of the Attestor being picked as a
+
+block producer increases with Si
+
+linearly. The stake is subject to punishment p
+
+upon provable malice in block production.
+5.4.2 Attestor Contract, Cai
+Upon staking amount Si > Smin a contract is created on chain for the
+Attestor with the balance Si
+
+. This balance is updated upon receiving block
+rewards R, transaction fee t and punishments p. The Attestor can dissolve the
+stake by creating a DISSOLVE transaction to Cai
+
+. This creates a coin transaction
+
+to the EOA ask. The remaining Stake S
+′
+i
+is transferred to the EOA that initially
+
+transferred the stake to Cstake.
+5.4.3 Proof Generator, Cproof
+A User can create a claim request Reqclaim by creating a transaction to
+Cproof. This contract does the following
+– Accepts user’s transaction along with transaction fees t and publishes the
+selected Attestors for the proof generation
+– Waits for Attestor to submit proofs and signatures
+– When all Attestors have submitted proofs, waits for whistleblowing time
+timew
+– If no whistleblowing took place, it transfers t/n to the n attestors each
+– If there is a whistleblowing that took place within timew, waits for appeal
+nodes’ decision
+
+26
+
+– Transfers the amount t/(n − k) to the n − k honest Attestors
+– Emits a punishment transaction for k dishonest Attestors
+5.4.4 Whistleblowing, Cwhistle
+An Attestor can invoke a whistleblowing within timew of the last submitted
+proof.
+5.4.5 Honeypot, Choneypot
+The User can submit ENC(D, Reqclaim) to this contract from any EOA, for an
+expected honeypot data D. Once proofs have been submitted and revealed on
+Cproof for request Reqclaim, the User can reveal D by publishing the private key
+for ENC. If D exactly matches one of the data inputs submitted by the Attestor,
+that Attestor is punished with a penalty p.
+
+27
+
+6 Conclusion
+The Reclaim protocol allows users to credibly prove statements about the
+data that they receive online, in a secure and computationally efficient way. The
+protocol does not require any special cooperation from the server sending the
+
+data, or from any future parties who want to verify its correctness. The pro-
+tocol requires an attestor who must be trusted to behave honestly, but proofs
+
+can also be attested by a set of trust-less nodes incentivized by an economic
+
+mechanism. The anonymity, integrity and efficiency of the protocol is facili-
+tated by a purpose-built blockchain, allowing users to have full control over the
+
+management of their credentials.
+
+28
+
+References
+[1] Tlsnotary - a mechanism for independently audited https sessions. 2014.
+[2] E. Ben-Sasson, A. Chiesa, C. Garman, M. Green, I. Miers, E. Tromer,
+and M. Virza. Zerocash: Decentralized anonymous payments from bitcoin
+(extended version). Cryptology ePrint Archive: Report 2014/349, pages
+5–9, 18–25, 2014. doi: https://eprint.iacr.org/2014/349.
+[3] V. Costan and S. Devadas. Intel sgx explained. Cryptology ePrint Archive,
+2016.
+
+[4] J. P. Degabriele, J. Govinden, F. G ̈unther, and K. G. Paterson. The se-
+curity of chacha20-poly1305 in the multi-user setting. Cryptology ePrint
+
+Archive, Paper 2023/085, 2023. URL https://eprint.iacr.org/2023/
+085. https://eprint.iacr.org/2023/085.
+
+[5] D. Eastlake and T. Hansen. US Secure Hash Algorithms (SHA and SHA-
+based HMAC and HKDF). RFC 6234, May 2011. URL https://www.
+
+rfc-editor.org/rfc/rfc6234.txt.
+[6] U. Feige, A. Fiat, and A. Shamir. Zero-knowledge proofs of identity. J.
+Cryptology 1, 77–94, 1988. URL https://doi.org/10.1007/BF02351717.
+[7] D. Johnson, A. Menezes, and S. A. Vanstone. The elliptic curve
+digital signature algorithm (ecdsa). Int. J. Inf. Sec., 1(1):36–
+63, 2001. URL http://dblp.uni-trier.de/db/journals/ijisec/
+ijisec1.html#JohnsonMV01.
+[8] Y. Nir and A. Langley. ChaCha20 and Poly1305 for IETF Protocols. RFC
+8439, June 2018. URL https://www.rfc-editor.org/rfc/rfc8439.txt.
+[9] E. Rescorla. HTTP Over TLS. RFC 2818, May 2000. URL https://
+rfc-editor.org/rfc/rfc2818.txt.
+[10] E. Rescorla. The Transport Layer Security (TLS) Protocol Version 1.3.
+RFC 8446, Aug. 2018. URL https://rfc-editor.org/rfc/rfc8446.
+txt.
+[11] J. Van Bulck, M. Minkin, O. Weisse, D. Genkin, B. Kasikci, F. Piessens,
+M. Silberstein, T. F. Wenisch, Y. Yarom, and R. Strackx. Foreshadow:
+
+29
+
+Extracting the keys to the intel {SGX} kingdom with transient {Out-of-
+Order} execution. In 27th USENIX Security Symposium (USENIX Security
+
+18), pages 991–1008, 2018.
+[12] S. Van Schaik, A. Kwong, D. Genkin, and Y. Yarom. Sgaxe: How sgx fails
+in practice, 2020.
+[13] G. Wood. Ethereum: A secure decentralised generalised transaction ledger.
+doi: https://ethereum.github.io/yellowpaper/paper.pdf.
+[14] F. Zhang, E. Cecchetti, K. Croman, A. Juels, and E. Shi. Town crier:
+An authenticated data feed for smart contracts. In Proceedings of the 2016
+aCM sIGSAC conference on computer and communications security, pages
+270–282, 2016.
+
+[15] F. Zhang, D. Maram, H. Malvai, S. Goldfeder, and A. Juels. Deco: Liberat-
+ing web data using decentralized oracles for tls. In Proceedings of the 2020
+
+ACM SIGSAC Conference on Computer and Communications Security,
+pages 1919–1938, 2020.
+
+30
+
+A Use of Cryptographic Primitives
+In this section we formally define the cryptographic primitives we use and
+the reasoning behind their use.
+A.1 TLS Encryption Function
+As a TLS encryption function Encrypt and decryption function Decrypt we
+use the corresponding algorithms, defined by the ChaCha20 stream cipher [8].
+The function Encrypt(K, N, M) receives three parameters: K – symmetric
+key, N – nonce, M – an arbitrary-length plaintext. This function returns the
+ciphertext C of the same length as M.
+The function Decrypt(K, N, C) receives three parameters: K – symmetric
+key, N – nonce, C – an arbitrary-length ciphertext. This function returns the
+plaintext M.
+All standard implementations of the TLS 1.3 support ciphersuites with two
+block ciphers: AES and ChaCha20. However, in the Reclaim protocol we require
+to use exactly ChaCha20 during TLS sessions. Such a decision is basically caused
+
+by performance reasons. Since the decryption operation appears in the zero-
+knowledge proof creation, the speed of this operation directly affects the time
+
+consumed to compute the zero-knowledge proof at the user’s device. Therefore,
+the ChaCha20 encryption scheme was chosen over AES in order to make this
+process faster. However, it is important to mention that this design decision does
+not affect the security of the protocol since the ChaCha20 scheme is considered
+secure [4].
+In addition, the design of ChaCha20, defined in [8], allows us to claim that
+the redacted ciphertext will indeed match the redacted plaintext at all the
+symbols that were not changed. Basically, the reason behind this is that in the
+process of encryption or decryption this block cipher does the XOR operation
+of each byte with a pseudo-random bytes of a keystream block. This keystream
+block value does not depend on anything but the encryption key K and nonce
+N. To sum up, the use of the same key K and nonce N leads to the same
+keystream blocks, hence, same bytes of plaintexts at same positions will become
+same bytes of ciphertexts, regardless of changing other symbols. This property
+can be easily seen in the scheme of ChaCha20 below.
+
+31
+
+Figure 4: ChaCha20 scheme
+
+A.2 Digital Signature Algorithm
+As a signing function Sign and signature verification function Verify we use
+the corresponding algorithms, defined by the ECDSA [7].
+The function Sign(data, key) receives as an input two parameters: data –
+the data that has to be signed, key – the signing key. This function returns the
+signature σ.
+
+The function Verify(σ, data) receives an input two parameters: σ – the signa-
+ture, data – the data the signature of which σ is supposed to be. This function
+
+returns true if σ is a correct signature of data, and false otherwise.
+A.3 Key Derivation Function
+As a key derivation function KDF we use the block cipher, defined above in
+section A.1: KDF(salt, IKM) = Encrypt(IKM,Hash(0), salt).
+The function KDF(salt, IKM) receives as an input two parameters: salt –
+a non-secret random value, IKM – input key material. This function returns a
+pseudo-random key P RK.
+A.4 Hash Function
+As a hash function Hash we use the SHA − 256 hash function, defined in [5].
+
+32
+
+The function Hash(data) receives as an input one parameter: data – an
+arbitrary size string. This function returns as an output a string h, which length
+is 256 bytes.
+
+B Implementing Proof Verification
+There are two cases in which proof must be shared - one in which the verifier
+is a centralized entity capable of sharing secrets with the user, and the other
+when the verifier is a smart contract and thus incapable of having a secret line
+of communication.
+
+B.1 Sharing Proof with Centralized Verifier
+If the verifier runs a server and is capable of establishing a private line of
+communication with the user, the server can share the secret message on the
+private line and ask the user to use that as the context while providing the
+signature. No user who doesn’t have access to the private line will have access
+to the secret message, and will not be able to provide the correct expected
+signature.
+B.2 Sharing Proof with a Smart Contract
+If the verifier is a smart contract, we assume that the smart contract gives
+some benefit to the user on chain. For example, tokens or NFTs. In such cases,
+the smart contract should make the context public. Every user submitting the
+proof to the smart contract must provide a signed message msg. The smart
+contract must verify that msg has been created using the correct context and
+Xpk derived from the signature should match the Xpk used to generate the proof.
+The smart contract should give user benefits to Xpk or some other address that
+is to be included in the msg’s context before signing.
+
+C Fee Payment Mechanism
+In order to provide attestors with a payment for their work, we are using
+blockchain smart contract as a guarantor. The fee is sent to the smart contract
+by a user, and later released to the attestor after all the attestors finished their
+work, and the resulting proof has been computed.
+
+33
+
+In practice, fee sending and release have to be performed more carefully
+than described above. The main reason here is that no user wants to get doxxed
+by an attestor after a couple of created proofs. If an attestor can track where
+coins came from, they can get some extra information about a user via collecting
+claims that have been proved by the this user. Therefore, the way we carry out
+the fee transfer has to be untraceable for anyone including attestors.
+The anonymizing solution we propose here is very similar to that of used in
+ZCash [2]. We will note specifics of our approach that differ it from the original
+one, however, we refer the reader to the original paper in order to understand
+all the details.
+When a user sends the fee to the Blockchain (smart-contract), they actually
+create a new coin c with the value fee, and a new owner addrsc, that is the
+address reserved by the smart-contract.
+
+When the smart-contract releases fee to attestors, it creates attNum num-
+ber of coins ci
+
+, each with value fee
+
+attNum and a new owner that is each of attestor’s
+
+address.
+
+D Further Security Considerations
+In this section we discuss potential attacks against the Reclaim protocol and
+explain the protection solutions we designed against them.
+D.1 Private Data Reveal Attacks
+
+We consider an attack in which an Attestor seeks to reveal any data, trans-
+ferred between a User and a Website, that is not intended to be disclosed.
+
+All the data that goes through the Attestor is encrypted, and the Attestor
+does not know the key(s) to decrypt this data. This property is provided by the
+TLS protocol : even when an adversary has access to all the messages (including
+the TLS Handshake messages), it is infeasible for them to compute encryption
+keys derived by parties of the connection.
+As for the response message the User hides all the private data (by changing
+all the symbols to «∗»), and sends this redacted plaintext to the Attestor. The
+User does not disclose the encryption key to the Attestor neither explicitly, nor
+implicitly (due to the general zero-knowledge proofs properties [6]).
+
+34
+
+D.2 Man in the Middle Attacks
+Man-in-the-Middle attacks is a type of attacks where an attacker secretly
+intercepts and potentially alters or reads the communication between two parties
+who believe they are directly communicating with each other. In this attack,
+the attacker positions themselves between the two legitimate parties and can
+monitor, capture, and manipulate the data transmitted between them without
+their knowledge.
+In our case we can consider two types of man in the middle threats. First of
+
+them is a standard third-party adversary that decides to observe the communi-
+cation and perform some threat. However, the protection from such an attacker
+
+is provided by the design of TLS.
+Another possible man in the middle situation we can consider is when this
+man in the middle is the Attestor themselves. Nevertheless, the Attestor has no
+
+benefits over a random third-party observer, since they just transmit the en-
+crypted data and have no additional information. The only information revealed
+
+to Attestors is the information that is revealed intentionally to allow them to
+verify the claim truthfulness. As explained in the section D.1, no other data is
+leaked.
+D.3 Impersonation Attacks
+Impersonation attacks is a type of attacks in which an adversary pretends to
+be someone else in order to get some profit for themselves or harm the real owner
+of this identity. Let us consider possible impersonation attack in the Reclaim
+protocol.
+In the Reclaim protocol a User can possibly share/sell their claim credentials
+(e.g. login and password for their account used in the claim) with any other
+User, that will be able to impersonate the owner, using them, for own benefits.
+However, in this case, if both of them later use those credentials to prove the
+same claim, the reputation of the claim will be spoiled. Therefore, the claim
+will not be accepted by some Verifiers, and the real owner of the claim will not
+be able to use it for their benefits. That is why a User is incentivized to avoid
+such situations, hence, avoid sharing their credentials.
+
+35
+
+D.4 Doxxing Attacks
+Doxxing attacks is a type of attacks in which an individual’s private and
+personally identifiable information is publicly disclosed without their consent.
+An instance of such a threat in our case is a third-party that can successfully
+identify that several proved claims belong to the same person.
+
+The protection against such attacks relies on two features. The first is deriva-
+tion a key pair (Xpk, Xsk) that is unique for each person for each claim. More-
+over, due to the properties of key derivation function, that is used to compute
+
+the key pair, it is infeasible to find the master key msk that was used as an
+input for this function. Therefore, anyone who learns Xpk or Xsk cannot connect
+it to the master key, hence, to the identity of the owner.
+
+E Example of a TLS Response Modification
+Let’s say the user wants to prove they have $1000 on their bank account.
+The user sends a request to the bank website to log in to their account and
+receives as a response the following ciphertext (enc_resp):
+Sapi1sH9vM0HZb8mWdnhzOWlzWF+4IxF7LdUZ26JEu3TCHNuY
+This ciphertext can be decrypted to the following plaintext (resp):
+Hello Jake; Balance: $1000; Account number: 12345
+
+The data that has to be revealed to prove that the user indeed has $1000 at
+their bank account is the middle part of the response, namely: “Balance: $1000;”
+For simplicity let’s consider the packet size as 16 byte, and the block size as
+6 bytes. Thereafter, at the following steps the user will get the following strings:
+
+respp = “∗ ∗ ∗ ∗ ∗ ∗ ∗ ∗ ∗ ∗ ∗∗Balance: $1000;∗ ∗ ∗ ∗ ∗”
+
+respr = “Balance: $1000;∗ ∗ ∗”
+
+The last step is to replace the corresponding bytes in the enc_resp with
+the gibberish symbol and discard some of them to get enc_respr:
+
+Zb8mWdnhzOWlzWF∗ ∗ ∗
+
+36

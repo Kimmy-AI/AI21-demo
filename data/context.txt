@@ -1,0 +1,14 @@
+To train a custom model, you will need to collect a dataset of training examples. Each example consists of a prompt, which is a valid input text, and a completion, which is a correct output for that specific prompt.
+
+🔢 How many examples do I need?
+At least 50 training examples are required to train a custom model. If you upload a file that contains fewer than 50 examples, you will encounter an error. More is better, so provide as many examples as you can.
+
+🧩 It's all about quantity?
+No! Data quality and diversity matter as well, so it’s a good idea to go over your examples manually and make sure they accurately capture various aspects of your task. It's critical that your examples reflect the real-world distribution of your problem.
+
+File Formats
+The dataset must be submitted in a single .csv or .jsonl file. We recommend using a .jsonl file due to better handling of line breaks.
+
+If you are submitting a .csv file, it should have two columns labeled "prompt" and "completion". Each row should contain a single training example, with no empty rows in between.
+
+If you are submitting a .jsonl file, each line in the file should be a JSON dictionary with two fields: "prompt" and "completion".
